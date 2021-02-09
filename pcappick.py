@@ -12,7 +12,8 @@
 # PDETIPv4 Utility for detecting IPv4 packet headers in dump files            #
 #                                                                             #
 # r1 : Initial release, libpcap in Intel format                               #
-# r1 : libpcap in Motorola format                                             #
+# r2 : libpcap in Motorola format                                             #
+# r3 : End of input flag no longer required                                   #
 #                                                                             #
 #-----------------------------------------------------------------------------#
 
@@ -23,89 +24,85 @@ import sys
 def main() :
  print("\"{}\" - copy selected frames from a file in libpcap format".format(path.basename(sys.argv[0])), file = sys.stderr)
  if len(sys.argv) != 4 :
-  print("Syntax:\n {} <infile> <listfile> <outfile>".format(path.basename(sys.argv[0])), file = sys.stderr)
+  print("Syntax:\n {} <infile> <list> <outfile>".format(path.basename(sys.argv[0])), file = sys.stderr)
   sys.exit(64)
- eoin = False
  try :
   infile = open(sys.argv[1], "rb")
- except :
+ except FileNotFoundError :
   print("Error: Infile \"{}\" not found".format(sys.argv[1]), file = sys.stderr)
-  eoin = True
+  sys.exit(66)
  try :
   lsfile = open(sys.argv[2], "rt")
- except :
-  print("Error: Listfile \"{}\" not found".format(sys.argv[2]), file = sys.stderr)
-  eoin = True
- if eoin == False :
-  try :
-   oufile = open(sys.argv[3], "wb")
-  except :
-   print("Error: Outfile \"{}\" not created".format(sys.argv[3]), file = sys.stderr)
-   eoin = True
- if eoin == True :
-  if "infile" in locals() :
-   infile.close()
-  if "lsfile" in locals() :
-   lsfile.close()
-  sys.exit(65)
- tmstp0 = int(time())
- tmstp1 = tmstp0
- lslnnr = 0
+ except FileNotFoundError :
+  print("Error: List \"{}\" not found".format(sys.argv[2]), file = sys.stderr)
+  infile.close()
+  sys.exit(66)
+
+ tmstp0 = int(time()) # reference
+ tmstp1 = tmstp0      # last current
+ tmstp2 = tmstp0      # current
  olfrnr = 0
- while eoin == False :
-  nufrnr = lsfile.readline()
-  if bool(nufrnr) == False :
-   if tmstp0 != tmstp1 :
-    print("", file = sys.stderr)
-   print("End of listfile reached at L#{}/F#{}".format(lslnnr, olfrnr), file = sys.stderr)
-   eoin = True
-   break
-  else :
-   lslnnr += 1
+ lslnnr = 0
+
+ for nufrnr in lsfile :
+  lslnnr += 1
   try :
    nufrnr = int(nufrnr)
-   if nufrnr >= 1 :
-    if olfrnr == 0 :
-     print("Processing infile \"{}\"...".format(sys.argv[1]), file = sys.stderr)
-     olfrnr = nufrnr
-     frnr = 0
-     frbuff = infile.read(24)
+  except :
+   print("\nWarning: List \"{}\" line #{} \"{}\" not a valid number, skipping...".format(sys.argv[2], lslnnr, nufrnr.rstrip("\n")), file = sys.stderr)
+   continue
+  if nufrnr >= 1 :
+   if olfrnr == 0 :
+    print("Processing infile \"{}\"...".format(sys.argv[1]), file = sys.stderr)
+    olfrnr = nufrnr
+    frnr = 0
+    frbuff = infile.read(24)
+    if len(frbuff) == 24 :
      if frbuff[0:4] == b"\xa1\xb2\xc3\xd4" or frbuff[0:4] == b"\xd4\xc3\xb2\xa1" or frbuff[0:4] == b"\x0a\x0d\x0d\x0a" :
       print("Infile \"{}\" format {}".format(sys.argv[1], frbuff[0:4]), file = sys.stderr)
       infrmt = frbuff[0:1]
      else :
       print("Error: Infile \"{}\" format unknown".format(sys.argv[1]), file = sys.stderr)
+      infile.close()
+      lsfile.close()
+      sys.exit(65)
+     try :
+      oufile = open(sys.argv[3], "wb")
+     except :
+      print("Error: Outfile \"{}\" creation failure".format(sys.argv[3]), file = sys.stderr)
+      infile.close()
+      lsfile.close()
+      sys.exit(73)
      oufile.write(frbuff)
-    elif nufrnr <= olfrnr :
-     if tmstp0 != tmstp1 :
-      print("", file = sys.stderr)
-     print("Warning: Listfile \"{}\" line#{} next frame {} < previous frame {}, skipping...".format(sys.argv[2], lslnnr, nufrnr, olfrnr), file = sys.stderr)
-     continue
-   else :
-    if tmstp0 != tmstp1 :
+    else :
+     print("Error: Infile \"{}\" too short".format(sys.argv[1]), file = sys.stderr)
+     infile.close()
+     lsfile.close()
+     sys.exit(65)
+   elif nufrnr <= olfrnr :
+    print("Warning: List \"{}\" line#{} next frame {} < previous frame {}, skipping...".format(sys.argv[2], lslnnr, nufrnr, olfrnr), file = sys.stderr)
+    continue
+  else :
+   if tmstp2 != tmstp0 :
+    if tmstp2 == tmstp1 :
+     # Before the warning message add a new line in case the progress indicator was printed earlier
      print("", file = sys.stderr)
-    print("Warning: Listfile \"{}\" line#{} next frame {} skipping...".format(sys.argv[2], lslnnr, nufrnr), file = sys.stderr)
-   tmstp2 = int(time())
-   if tmstp1 != tmstp2 :
-    print("\rin F#{} list L#{}F#{}, {} s".format(frnr, lslnnr, nufrnr, tmstp2 - tmstp0), end = ' ', file = sys.stderr)
-    tmstp1 = tmstp2
-  except :
-   if tmstp0 != tmstp1 :
-    print("", file = sys.stderr)
-   print("Warning: Listfile \"{}\" line #{} \"{}\" not a valid number".format(sys.argv[2], lslnnr, nufrnr.rstrip("\n")), file = sys.stderr)
+     tmstp2 = tmstp1 - 1
+   print("Warning: List \"{}\" line#{} next frame {} skipping...".format(sys.argv[2], lslnnr, nufrnr), file = sys.stderr)
    continue
+
   while frnr < nufrnr :
    frbuff = infile.read(16)
    if len(frbuff) < 16 :
-    eoin = True
-    if tmstp0 != tmstp1 :
-     print("", file = sys.stderr)
-    print("End of infile reached at F#{}, before listfile F#{}".format(frnr, nufrnr), file = sys.stderr)
-    break
+    print("\nEnd of infile reached at F#{}, before list F#{}".format(frnr, nufrnr), file = sys.stderr)
+    infile.close()
+    lsfile.close()
+    oufile.close()
+    sys.exit(0)
    frnr += 1
    tmstp2 = int(time())
    if tmstp1 != tmstp2 :
-    print("\rin F#{} list L#{}/F#{}, {} s".format(frnr, lslnnr, nufrnr, tmstp2 - tmstp0), end = ' ', file = sys.stderr)
+    print("\rF#{} list L#{}/F#{}, {} s".format(frnr, lslnnr, nufrnr, tmstp2 - tmstp0), end = ' ', file = sys.stderr)
     tmstp1 = tmstp2
    if frnr < nufrnr :
     # Skip the frame
@@ -132,6 +129,8 @@ def main() :
      sys.exit(65)
     oufile.write(frbuff)
     olfrnr = nufrnr
+
+ print("\nEnd of list reached at L#{}/F#{}".format(lslnnr, olfrnr), file = sys.stderr)
  infile.close()
  lsfile.close()
  oufile.close()
